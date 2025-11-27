@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>求人内容把握ツール</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- Babel for JSX/TypeScript transformation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body {
+      font-family: 'Noto Sans JP', sans-serif;
+      background-color: #f1f5f9;
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    /* Animation definitions */
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .animate-fade-in {
+      animation: fadeIn 0.2s ease-out forwards;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Main Application Script -->
+  <script type="text/babel" data-type="module" data-presets="react,typescript">
+    // --- Imports from CDN (esm.sh) ---
+    import React, { useState, useRef, useCallback, useEffect } from 'https://esm.sh/react@18.2.0';
+    import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+    import { 
+      Clock, Calendar, CheckSquare, AlertCircle, 
+      Edit3, Trash2, Users, Download, FileText, 
+      Store, Tag, AlertTriangle, RotateCcw 
+    } from 'https://esm.sh/lucide-react@0.292.0';
+    import html2canvas from 'https://esm.sh/html2canvas@1.4.1';
+    import { jsPDF } from 'https://esm.sh/jspdf@2.5.1';
+
+    // --- Helpers ---
+    // Simple ID generator for compatibility
+    const generateId = () => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+      }
+      return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    };
+
+    // --- Types & Constants (from types.ts) ---
+    export interface JobEntry {
+      id: string;
+      startTime: string;
+      endTime: string;
+      workDays: string[];
+      conditions: string[];
+      urgency: string;
+      otherDetails: string;
+      recruitCount: string;
+    }
+
+    export const DAYS_OF_WEEK = ['月', '火', '水', '木', '金', '土', '日'];
+
+    export const CONDITIONS_LIST = [
+      '土日可',
+      '土日いずれか可',
+      '祝日可',
+      '週2日以上',
+      '週3日以上',
+      '週4日以上',
+      '週5日',
+      '力仕事あり(男性優先)',
+      '外国人可',
+      '外国人不可',
+      '高校生可',
+    ];
+
+    export const DEPARTMENTS = [
+      { code: '56', name: '青果' },
+      { code: '57', name: '精肉' },
+      { code: '58', name: '惣菜' },
+      { code: '39', name: 'ベーカリー' },
+    ];
+
+    export const URGENCY_LEVELS = ['高', '中', '低'];
+
+    export const MAX_PEOPLE = 10;
+    export const MIN_PEOPLE = 1;
+
+    // --- Components ---
+
+    // 1. JobCard Component
+    const JobCard = ({ entry, index, onChange, onDelete }) => {
+      const [swipeOffset, setSwipeOffset] = useState(0);
+      const touchStartX = useRef(null);
+      const isDragging = useRef(false);
+
+      const handleDayToggle = (day) => {
+        const newDays = entry.workDays.includes(day)
+          ? entry.workDays.filter((d) => d !== day)
+          : [...entry.workDays, day];
+        
+        // Sort days based on standard week order
+        newDays.sort((a, b) => DAYS_OF_WEEK.indexOf(a) - DAYS_OF_WEEK.indexOf(b));
+        
+        onChange(entry.id, 'workDays', newDays);
+      };
+
+      const handleConditionToggle = (condition) => {
+        const newConditions = entry.conditions.includes(condition)
+          ? entry.conditions.filter((c) => c !== condition)
+          : [...entry.conditions, condition];
+        onChange(entry.id, 'conditions', newConditions);
+      };
+
+      // Touch Handlers for Swipe
+      const handleTouchStart = (e) => {
+        touchStartX.current = e.targetTouches[0].clientX;
+        isDragging.current = true;
+      };
+
+      const handleTouchMove = (e) => {
+        if (!touchStartX.current || !isDragging.current) return;
+        
+        const currentX = e.targetTouches[0].clientX;
+        const diff = currentX - touchStartX.current;
+
+        // Only allow sliding to the left (negative values), up to -150px
+        if (diff < 0 && diff > -150) {
+          setSwipeOffset(diff);
+        }
+      };
+
+      const handleTouchEnd = () => {
+        isDragging.current = false;
+        touchStartX.current = null;
+
+        // Threshold to snap open (e.g., -50px)
+        if (swipeOffset < -50) {
+          setSwipeOffset(-80); // Snap to show delete button
+        } else {
+          setSwipeOffset(0); // Snap back to close
+        }
+      };
+
+      // Helper to close swipe if touched elsewhere or confirmed
+      const resetSwipe = () => setSwipeOffset(0);
+
+      return (
+        <div className="relative mb-6 rounded-xl overflow-hidden shadow-sm group">
+          {/* Delete Button Background Layer */}
+          <div className="absolute inset-y-0 right-0 w-full bg-red-500 rounded-xl flex items-center justify-end pr-6">
+            <button 
+              onClick={() => { onDelete(); resetSwipe(); }}
+              className="flex flex-col items-center justify-center text-white h-full w-20"
+            >
+              <Trash2 className="w-6 h-6 mb-1" />
+              <span className="text-xs font-bold">削除</span>
+            </button>
+          </div>
+
+          {/* Main Card Content Layer */}
+          <div 
+            className="bg-white rounded-xl border border-slate-200 overflow-hidden relative transition-transform duration-200 ease-out z-10"
+            style={{ transform: `translateX(${swipeOffset}px)` }}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-lg text-slate-700 flex items-center gap-2">
+                <span className="bg-indigo-600 text-white text-xs px-2 py-1 rounded-full">No.{index + 1}</span>
+                求人詳細
+              </h3>
+              
+              <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                 <AlertCircle className="w-4 h-4 text-orange-500" />
+                 <span className="text-sm font-bold text-slate-600 mr-2">緊急度:</span>
+                 <div className="flex gap-1">
+                   {URGENCY_LEVELS.map((level) => {
+                     const isActive = entry.urgency === level;
+                     let activeClass = '';
+                     if (level === '高') activeClass = 'bg-red-500 text-white border-red-500';
+                     else if (level === '中') activeClass = 'bg-yellow-500 text-white border-yellow-500';
+                     else activeClass = 'bg-blue-500 text-white border-blue-500';
+
+                     return (
+                       <button
+                         key={level}
+                         onClick={() => onChange(entry.id, 'urgency', level)}
+                         className={`text-xs px-3 py-1 rounded border transition-colors ${
+                           isActive 
+                             ? activeClass 
+                             : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                         }`}
+                       >
+                         {level}
+                       </button>
+                     )
+                   })}
+                 </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Hint for mobile users */}
+              <div className="sm:hidden absolute top-2 right-2 text-slate-300 text-[10px] pointer-events-none">
+                ← 左へスワイプで削除
+              </div>
+
+              {/* Time Inputs */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-2 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-indigo-500" />
+                    始業時間
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="09:00"
+                    value={entry.startTime}
+                    onChange={(e) => onChange(entry.id, 'startTime', e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors placeholder-slate-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-2 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-indigo-500" />
+                    就業時間
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="18:00"
+                    value={entry.endTime}
+                    onChange={(e) => onChange(entry.id, 'endTime', e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors placeholder-slate-400"
+                  />
+                </div>
+              </div>
+
+              {/* Days of Week */}
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-3 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-indigo-500" />
+                  出勤曜日（複数選択可）
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {DAYS_OF_WEEK.map((day) => {
+                    const isSelected = entry.workDays.includes(day);
+                    return (
+                      <button
+                        key={day}
+                        onClick={() => handleDayToggle(day)}
+                        className={`w-10 h-10 rounded-full font-medium text-sm transition-all duration-200 flex items-center justify-center
+                          ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white shadow-sm scale-105'
+                              : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                          }`}
+                      >
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Other Conditions */}
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-3 flex items-center gap-2">
+                  <CheckSquare className="w-4 h-4 text-indigo-500" />
+                  こだわり条件（複数選択可）
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {CONDITIONS_LIST.map((condition) => {
+                    const isChecked = entry.conditions.includes(condition);
+                    return (
+                      <label
+                        key={condition}
+                        className={`flex items-center p-3 rounded-lg border cursor-pointer transition-all duration-200
+                          ${
+                            isChecked
+                              ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                              : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                          }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleConditionToggle(condition)}
+                          className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 mr-3"
+                        />
+                        <span className="text-sm font-medium">{condition}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Recruit Count for Multiple People */}
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-2 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-indigo-500" />
+                  同条件で複数人募集する
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="2"
+                    placeholder="2"
+                    value={entry.recruitCount}
+                    onChange={(e) => onChange(entry.id, 'recruitCount', e.target.value)}
+                    className="w-32 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors"
+                  />
+                  <span className="text-slate-600 font-medium">名</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">※2名以上の場合に入力してください。未入力の場合は1名となります。</p>
+              </div>
+
+              {/* Free Text Input */}
+              <div>
+                 <label className="block text-sm font-medium text-slate-600 mb-2 flex items-center gap-2">
+                    <Edit3 className="w-4 h-4 text-indigo-500" />
+                    その他条件（自由入力）
+                 </label>
+                 <textarea
+                   value={entry.otherDetails}
+                   onChange={(e) => onChange(entry.id, 'otherDetails', e.target.value)}
+                   placeholder="例：経験者優遇、早朝勤務可能な方など"
+                   className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors placeholder-slate-400 min-h-[80px]"
+                 />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // 2. PrintLayout Component
+    const PrintLayout = ({ entries, printRef, storeNumber, department }) => {
+      const departmentName = DEPARTMENTS.find(d => d.code === department)?.name || department;
+
+      return (
+        <div className="absolute top-0 left-0 -z-50 overflow-hidden w-0 h-0">
+          <div
+            ref={printRef}
+            className="w-[210mm] bg-white p-12 text-slate-900"
+            style={{ minHeight: '297mm' }}
+          >
+            <header className="mb-8 border-b-2 border-slate-800 pb-4">
+              <div className="flex justify-between items-end mb-4">
+                 <div>
+                   <h1 className="text-3xl font-bold mb-2">求人内容確認票</h1>
+                 </div>
+                 <div className="text-right">
+                    <div className="text-xl font-bold border-b border-slate-400 pb-1 mb-1 px-2">
+                       店舗No: {storeNumber || '____'}
+                    </div>
+                    <div className="text-xl font-bold border-b border-slate-400 pb-1 px-2">
+                       部門: {department ? `${department} ${departmentName}` : '____'}
+                    </div>
+                 </div>
+              </div>
+              <p className="text-sm text-slate-500 text-right">作成日: {new Date().toLocaleDateString('ja-JP')}</p>
+            </header>
+
+            <div className="space-y-6">
+              {entries.map((entry, index) => (
+                <div key={entry.id} className="border border-slate-300 rounded-lg p-5 break-inside-avoid relative overflow-hidden">
+                  {/* Urgency Badge for Print */}
+                  <div className="absolute top-0 right-0 p-4">
+                    <span className={`inline-block px-3 py-1 text-sm font-bold border rounded
+                      ${entry.urgency === '高' ? 'border-red-600 text-red-600 bg-red-50' : 
+                        entry.urgency === '中' ? 'border-yellow-600 text-yellow-600 bg-yellow-50' : 
+                        'border-blue-600 text-blue-600 bg-blue-50'}`}>
+                      緊急度: {entry.urgency}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-2 mr-24">
+                    <h2 className="text-xl font-bold text-slate-800">求人 No.{index + 1}</h2>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 gap-3 text-sm">
+                    <div className="flex border-b border-slate-100 py-2">
+                      <span className="w-32 font-bold text-slate-600 flex-shrink-0">勤務時間</span>
+                      <span className="flex-1 font-medium text-lg">
+                        {entry.startTime || '始業時間条件なし'} 〜 {entry.endTime || '終業時間条件なし'}
+                      </span>
+                    </div>
+
+                    <div className="flex border-b border-slate-100 py-2">
+                      <span className="w-32 font-bold text-slate-600 flex-shrink-0">出勤曜日</span>
+                      <span className="flex-1 font-medium">
+                        {entry.workDays.length > 0 ? entry.workDays.join('・') : '指定なし'}
+                      </span>
+                    </div>
+
+                    <div className="flex py-2 border-b border-slate-100">
+                      <span className="w-32 font-bold text-slate-600 flex-shrink-0">こだわり条件</span>
+                      <div className="flex-1 flex flex-wrap gap-2">
+                        {entry.conditions.length > 0 ? (
+                           entry.conditions.map(c => (
+                             <span key={c} className="inline-block bg-slate-100 px-2 py-1 rounded border border-slate-200 print:border-slate-300">
+                               {c}
+                             </span>
+                           ))
+                        ) : (
+                          '特になし'
+                        )}
+                      </div>
+                    </div>
+
+                    {entry.recruitCount && parseInt(entry.recruitCount) >= 2 && (
+                      <div className="flex py-2 border-b border-slate-100">
+                        <span className="w-32 font-bold text-slate-600 flex-shrink-0">募集人数</span>
+                        <span className="flex-1 font-bold text-lg text-indigo-700">
+                          {entry.recruitCount} 名 (同条件)
+                        </span>
+                      </div>
+                    )}
+
+                    {entry.otherDetails && (
+                      <div className="flex py-2">
+                        <span className="w-32 font-bold text-slate-600 flex-shrink-0">その他詳細</span>
+                        <span className="flex-1 font-medium whitespace-pre-wrap text-slate-800">
+                          {entry.otherDetails}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <footer className="mt-12 text-center text-xs text-slate-400 border-t border-slate-200 pt-4">
+              求人内容把握ツールにより生成
+            </footer>
+          </div>
+        </div>
+      );
+    };
+
+    // 3. App Component
+    const App = () => {
+      const [storeNumber, setStoreNumber] = useState('');
+      const [department, setDepartment] = useState(DEPARTMENTS[0].code);
+      const [peopleCount, setPeopleCount] = useState(1);
+      const [jobEntries, setJobEntries] = useState([
+        { id: generateId(), startTime: '', endTime: '', workDays: [], conditions: [], urgency: '中', otherDetails: '', recruitCount: '' }
+      ]);
+      const [isGenerating, setIsGenerating] = useState(false);
+      
+      // Delete Modal State
+      const [deleteTargetId, setDeleteTargetId] = useState(null);
+
+      // Reset Modal State
+      const [showResetModal, setShowResetModal] = useState(false);
+
+      const printRef = useRef(null);
+
+      const handleCountChange = (e) => {
+        const newCount = parseInt(e.target.value, 10);
+        setPeopleCount(newCount);
+
+        setJobEntries((prev) => {
+          const current = [...prev];
+          if (newCount > current.length) {
+            const added = Array.from({ length: newCount - current.length }, () => ({
+              id: generateId(),
+              startTime: '',
+              endTime: '',
+              workDays: [],
+              conditions: [],
+              urgency: '中',
+              otherDetails: '',
+              recruitCount: '',
+            }));
+            return [...current, ...added];
+          } else {
+            return current.slice(0, newCount);
+          }
+        });
+      };
+
+      const handleEntryChange = useCallback((id, field, value) => {
+        setJobEntries((prev) =>
+          prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry))
+        );
+      }, []);
+
+      const requestDelete = (id) => {
+        if (jobEntries.length <= MIN_PEOPLE) {
+          alert(`求人は最低${MIN_PEOPLE}名必要です。`);
+          return;
+        }
+        setDeleteTargetId(id);
+      };
+
+      const confirmDelete = () => {
+        if (deleteTargetId) {
+          setJobEntries((prev) => prev.filter((entry) => entry.id !== deleteTargetId));
+          setPeopleCount((prev) => prev - 1);
+          setDeleteTargetId(null);
+        }
+      };
+
+      const cancelDelete = () => {
+        setDeleteTargetId(null);
+      };
+
+      const handleReset = () => {
+        setPeopleCount(1);
+        setJobEntries([{
+          id: generateId(),
+          startTime: '',
+          endTime: '',
+          workDays: [],
+          conditions: [],
+          urgency: '中',
+          otherDetails: '',
+          recruitCount: ''
+        }]);
+        setShowResetModal(false);
+      };
+
+      const generatePDF = async () => {
+        if (!printRef.current) return;
+        setIsGenerating(true);
+
+        try {
+          // Small delay to ensure render
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          const canvas = await html2canvas(printRef.current, {
+            scale: 2, // Higher scale for better resolution
+            useCORS: true,
+            logging: false,
+          });
+
+          const imgData = canvas.toDataURL('image/png');
+          const pdf = new jsPDF({
+            orientation: 'p',
+            unit: 'mm',
+            format: 'a4',
+          });
+
+          const imgWidth = 210;
+          const pageHeight = 297;
+          const imgHeight = (canvas.height * imgWidth) / canvas.width;
+          let heightLeft = imgHeight;
+          let position = 0;
+
+          pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+
+          // Handle multi-page if content is long
+          while (heightLeft >= 0) {
+            position = heightLeft - imgHeight;
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+          }
+
+          pdf.save(`求人内容帳票_${storeNumber}_${department}.pdf`);
+        } catch (error) {
+          console.error('PDF Generation failed:', error);
+          alert('PDFの作成に失敗しました。');
+        } finally {
+          setIsGenerating(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 pb-32 relative">
+          {/* Header */}
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="bg-indigo-600 p-2 rounded-lg">
+                  <FileText className="w-6 h-6 text-white" />
+                </div>
+                <h1 className="text-xl font-bold text-slate-800 hidden sm:block">求人内容把握ツール</h1>
+                <h1 className="text-xl font-bold text-slate-800 sm:hidden">求人ツール</h1>
+              </div>
+              <div className="text-xs text-slate-500 text-right">
+                 簡単・正確に帳票作成
+              </div>
+            </div>
+          </header>
+
+          <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            
+            {/* Step 1: Basic Info (Store & Department) */}
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 mb-6">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
+                <Store className="w-5 h-5 text-indigo-600" />
+                店舗・部門情報
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-2">
+                    店舗番号
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="例: 1234"
+                    value={storeNumber}
+                    onChange={(e) => setStoreNumber(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-2">
+                    部門選択
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={department}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none appearance-none bg-white"
+                    >
+                      {DEPARTMENTS.map((dept) => (
+                        <option key={dept.code} value={dept.code}>
+                          {dept.code} {dept.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+                      <Tag className="w-4 h-4" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2: Configuration */}
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 mb-8">
+              <div className="flex items-start md:items-center gap-4 flex-col md:flex-row">
+                <div className="flex-1">
+                  <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-1">
+                    <Users className="w-5 h-5 text-indigo-600" />
+                    採用人数の設定
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    募集したい求人の人数を選択してください（{MIN_PEOPLE}名〜{MAX_PEOPLE}名）
+                  </p>
+                </div>
+                <div className="w-full md:w-auto">
+                  <select
+                    value={peopleCount}
+                    onChange={handleCountChange}
+                    className="w-full md:w-32 px-4 py-2 border border-slate-300 rounded-lg text-lg font-bold text-indigo-600 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    {Array.from({ length: MAX_PEOPLE }, (_, i) => i + 1).map((num) => (
+                      <option key={num} value={num}>
+                        {num} 名
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 3: Form Inputs */}
+            <div className="space-y-6">
+              {jobEntries.map((entry, index) => (
+                <JobCard
+                  key={entry.id}
+                  entry={entry}
+                  index={index}
+                  onChange={handleEntryChange}
+                  onDelete={() => requestDelete(entry.id)}
+                />
+              ))}
+            </div>
+          </main>
+
+          {/* Floating Action Area */}
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-20">
+            <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="text-sm text-slate-500 hidden sm:block">
+                <span className="font-bold text-indigo-600">{peopleCount}</span> 件の求人内容を入力中
+              </div>
+              
+              <div className="flex w-full sm:w-auto gap-3">
+                <button
+                  onClick={() => setShowResetModal(true)}
+                  className="bg-white border border-slate-300 text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 font-bold py-3 px-4 rounded-full shadow-sm transition-all flex items-center justify-center gap-2 min-w-[50px]"
+                  title="リセット"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </button>
+
+                <button
+                  onClick={generatePDF}
+                  disabled={isGenerating}
+                  className="flex-1 sm:flex-initial bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-full shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  {isGenerating ? (
+                    <>
+                      <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />
+                      生成中...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-5 h-5" />
+                      帳票をPDFでダウンロード
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Confirmation Modal for Delete */}
+          {deleteTargetId && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 animate-fade-in">
+              <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform transition-all scale-100">
+                <div className="flex flex-col items-center text-center">
+                  <div className="bg-red-100 p-3 rounded-full mb-4">
+                    <AlertTriangle className="w-8 h-8 text-red-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-2">削除しますか？</h3>
+                  <p className="text-slate-500 text-sm mb-6">
+                    この求人情報を削除すると、全体の人数も減ります。
+                  </p>
+                  <div className="flex gap-3 w-full">
+                    <button
+                      onClick={confirmDelete}
+                      className="flex-1 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition-colors"
+                    >
+                      はい
+                    </button>
+                    <button
+                      onClick={cancelDelete}
+                      className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 px-4 rounded-lg hover:bg-slate-200 transition-colors"
+                    >
+                      いいえ
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Confirmation Modal for Reset */}
+          {showResetModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 animate-fade-in">
+              <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform transition-all scale-100">
+                <div className="flex flex-col items-center text-center">
+                  <div className="bg-slate-100 p-3 rounded-full mb-4">
+                    <RotateCcw className="w-8 h-8 text-slate-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-2">リセットしますか？</h3>
+                  <p className="text-slate-500 text-sm mb-6">
+                    入力した求人内容がすべて消去され、1名に戻ります。店舗・部門情報は保持されます。
+                  </p>
+                  <div className="flex gap-3 w-full">
+                    <button
+                      onClick={handleReset}
+                      className="flex-1 bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors"
+                    >
+                      はい
+                    </button>
+                    <button
+                      onClick={() => setShowResetModal(false)}
+                      className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 px-4 rounded-lg hover:bg-slate-200 transition-colors"
+                    >
+                      いいえ
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hidden Print Layout */}
+          <PrintLayout 
+            entries={jobEntries} 
+            printRef={printRef} 
+            storeNumber={storeNumber}
+            department={department}
+          />
+        </div>
+      );
+    };
+
+    // --- Render ---
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    );
+  </script>
+</body>
+</html>
