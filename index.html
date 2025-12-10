@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>求人内容把握ツール</title>
 
-  <!-- アイコン設定 -->
+  <!-- アイコン設定 (ここを追加：iPhone対応のPNG画像) -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="求人帳票">
@@ -101,14 +101,14 @@
       '外国人可',
       '外国人不可',
       '高校生可',
+      '高校生不可',
     ];
 
-    // 部門コード（数字）を削除し、名称のみのリストに変更
     export const DEPARTMENTS = [
-      '青果',
-      '精肉',
-      '惣菜',
-      'ベーカリー',
+      { code: '56', name: '青果' },
+      { code: '57', name: '精肉' },
+      { code: '58', name: '惣菜' },
+      { code: '39', name: 'ベーカリー' },
     ];
 
     export const URGENCY_LEVELS = ['高', '中', '低'];
@@ -367,7 +367,8 @@
 
     // 2. PrintLayout Component
     const PrintLayout = ({ entries, printRef, storeNumber, department }) => {
-      // 部門コードロジックを削除し、直接表示
+      const departmentName = DEPARTMENTS.find(d => d.code === department)?.name || department;
+
       return (
         <div className="absolute top-0 left-0 -z-50 overflow-hidden w-0 h-0">
           <div
@@ -385,7 +386,7 @@
                        店舗No: {storeNumber || '____'}
                     </div>
                     <div className="text-xl font-bold border-b border-slate-400 pb-1 px-2">
-                       部門: {department || '____'}
+                       部門: {department ? `${department} ${departmentName}` : '____'}
                     </div>
                  </div>
               </div>
@@ -472,7 +473,7 @@
     // 3. App Component
     const App = () => {
       const [storeNumber, setStoreNumber] = useState('');
-      const [department, setDepartment] = useState(DEPARTMENTS[0]); // 初期値を最初の部門名に
+      const [department, setDepartment] = useState(DEPARTMENTS[0].code);
       const [peopleCount, setPeopleCount] = useState(1);
       const [jobEntries, setJobEntries] = useState([
         { id: generateId(), startTime: '', endTime: '', workDays: [], conditions: [], urgency: '中', otherDetails: '', recruitCount: '' }
@@ -649,8 +650,8 @@
                       className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none appearance-none bg-white"
                     >
                       {DEPARTMENTS.map((dept) => (
-                        <option key={dept} value={dept}>
-                          {dept}
+                        <option key={dept.code} value={dept.code}>
+                          {dept.code} {dept.name}
                         </option>
                       ))}
                     </select>
